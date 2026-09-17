@@ -53,7 +53,6 @@ func New(ctx context.Context) (*Runtime, error) {
 
 	// Create logger
 	logger := log.NewTextLogger(cfg.LogLevel)
-	logger.InfoContext(ctx, "runtime initialized", "provider", cfg.Provider, "model", cfg.Model)
 
 	// Create event bus
 	bus := event.NewBus()

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jgerontis/styx/internal/provider"
@@ -62,14 +63,20 @@ func TestRunChatStreamsAndResetsHistory(t *testing.T) {
 	if len(chats) != 3 {
 		t.Fatalf("expected 3 chat requests, got %d", len(chats))
 	}
-	if len(chats[1].Messages) != 3 {
-		t.Errorf("expected second request to include prior turn, got %d messages", len(chats[1].Messages))
+	if len(chats[0].Messages) < 2 || chats[0].Messages[0].Role != "system" || !strings.Contains(chats[0].Messages[0].Content, "Project: styx") {
+		t.Errorf("expected first request to include grounded workspace system prompt, got %#v", chats[0].Messages)
 	}
-	if len(chats[2].Messages) != 1 || chats[2].Messages[0].Content != "third prompt" {
-		t.Errorf("expected reset request to contain only third prompt, got %#v", chats[2].Messages)
+	if len(chats[1].Messages) != 4 {
+		t.Errorf("expected second request to include system prompt and prior turn, got %d messages", len(chats[1].Messages))
+	}
+	if len(chats[2].Messages) != 2 || chats[2].Messages[1].Content != "third prompt" {
+		t.Errorf("expected reset request to retain system prompt and contain third prompt, got %#v", chats[2].Messages)
 	}
 	if !bytes.Contains(output.Bytes(), []byte("hello from Styx")) {
 		t.Errorf("expected streamed response in output, got %q", output.String())
+	}
+	if !bytes.Contains(output.Bytes(), []byte("ollama connected.")) {
+		t.Errorf("expected connection status in output, got %q", output.String())
 	}
 }
 
@@ -96,19 +103,16 @@ func TestRunChatRejectsUnavailableModel(t *testing.T) {
 
 func TestStreamToMessageWritesBeforeStreamCompletes(t *testing.T) {
 	allowFinish := make(chan struct{})
-	stream := &controlledStream{
-		allowFinish:    allowFinish,
-		firstDeltaRead: make(chan struct{}),
-	}
-	var output bytes.Buffer
+	stream := &controlledStream{allowFinish: allowFinish}
+	output := &firstWriteBuffer{written: make(chan struct{})}
 	done := make(chan error, 1)
 
 	go func() {
-		_, err := streamToMessage(stream, &output)
+		_, err := streamToMessage(stream, output)
 		done <- err
 	}()
 
-	<-stream.firstDeltaRead
+	<-output.written
 	if got := output.String(); got != "first" {
 		t.Fatalf("expected first delta before stream completed, got %q", got)
 	}
@@ -120,16 +124,14 @@ func TestStreamToMessageWritesBeforeStreamCompletes(t *testing.T) {
 }
 
 type controlledStream struct {
-	allowFinish    <-chan struct{}
-	firstDeltaRead chan struct{}
-	step           int
+	allowFinish <-chan struct{}
+	step        int
 }
 
 func (s *controlledStream) Recv() (provider.Delta, error) {
 	s.step++
 	switch s.step {
 	case 1:
-		close(s.firstDeltaRead)
 		return provider.Delta{Type: "text", Text: "first"}, nil
 	case 2:
 		<-s.allowFinish
@@ -141,4 +143,16 @@ func (s *controlledStream) Recv() (provider.Delta, error) {
 
 func (s *controlledStream) Close() error {
 	return nil
+}
+
+type firstWriteBuffer struct {
+	bytes.Buffer
+	written chan struct{}
+	once    sync.Once
+}
+
+func (b *firstWriteBuffer) Write(data []byte) (int, error) {
+	n, err := b.Buffer.Write(data)
+	b.once.Do(func() { close(b.written) })
+	return n, err
 }

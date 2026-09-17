@@ -11,6 +11,7 @@ import (
 	"github.com/jgerontis/styx/internal/message"
 	"github.com/jgerontis/styx/internal/provider"
 	"github.com/jgerontis/styx/internal/runtime"
+	"github.com/jgerontis/styx/internal/tool"
 	"github.com/spf13/cobra"
 )
 
@@ -44,9 +45,14 @@ func runChat(ctx context.Context, input io.Reader, output io.Writer, providers *
 	if err := confirmModel(ctx, p, model); err != nil {
 		return err
 	}
+	workspace, err := tool.InspectWorkspace(".")
+	if err != nil {
+		return err
+	}
 
+	fmt.Fprintf(output, "%s connected.\n", p.Name())
 	fmt.Fprintf(output, "Styx chat using %s/%s. Type /reset or /exit.\n", providerName, model)
-	history := make([]message.Message, 0)
+	history := []message.Message{*message.NewTextMessage(message.RoleSystem, systemPrompt(workspace))}
 	scanner := bufio.NewScanner(input)
 
 	for {
@@ -65,7 +71,7 @@ func runChat(ctx context.Context, input io.Reader, output io.Writer, providers *
 		case "/exit", "/quit":
 			return nil
 		case "/reset":
-			history = history[:0]
+			history = history[:1]
 			fmt.Fprintln(output, "Conversation reset.")
 			continue
 		}
@@ -83,6 +89,14 @@ func runChat(ctx context.Context, input io.Reader, output io.Writer, providers *
 		}
 		history = append(history, *response)
 	}
+}
+
+func systemPrompt(workspace tool.WorkspaceSummary) string {
+	return fmt.Sprintf(`You are Styx, a terminal coding agent. Be precise and grounded in the workspace facts supplied below. For repository questions, state what is known and distinguish it from inference. Keep answers concise unless the user asks for detail.
+
+Workspace root: %s
+Project: %s
+Repository description: %s`, workspace.Root, workspace.ProjectName, workspace.Description)
 }
 
 func confirmModel(ctx context.Context, p provider.Provider, model string) error {

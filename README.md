@@ -84,12 +84,34 @@ skills/              built-in skills (agentskills.io format)
 ### Milestones
 
 1. **Usable Ollama chat CLI** *(complete)*: `styx chat` connects to Ollama, verifies the requested model, streams responses, preserves an in-memory conversation, and supports `/reset` and `/exit`.
-2. **Safe tool primitives** *(current)*: add filesystem, search, edit, and shell tools with JSON Schema validation and approval policies.
+2. **Safe tool primitives** *(current)*: begin with grounded read-only workspace inspection, then add filesystem, search, edit, and shell tools with JSON Schema validation and approval policies. Current checkpoint: `styx chat` tells the model the active repository's root, name, and README description.
 3. **Skills**: load agentskills.io-compatible `SKILL.md` bundles using progressive disclosure and `allowed-tools` permissions.
 4. **Plan/Test/Implement/Validate harness**: add isolated job phases, context assembly, and TDD-forward validation.
 5. **Durable sessions and refinement**: file-backed job artifacts, context-window strategies, and high-quality retry behavior.
 
 Early development. Milestone 1 is complete; safe tool primitives are next.
+
+## Build and Install
+
+Build a local executable:
+
+```bash
+make build
+./bin/styx chat --model gemma4:12b
+```
+
+Install `styx` into Go's binary directory (`GOBIN`, or `$(go env GOPATH)/bin`) so it can run from any repository:
+
+```bash
+make install
+styx chat --model gemma4:12b
+```
+
+Ensure that Go's binary directory is on your `PATH`. Run the full local pipeline with:
+
+```bash
+make check
+```
 
 ## License
 
