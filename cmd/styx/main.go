@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jgerontis/styx/internal/cli"
 	"github.com/jgerontis/styx/internal/runtime"
 )
 
@@ -17,10 +18,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	rt.Logger.InfoContext(ctx, "styx started")
-
-	// Placeholder: Cobra root command will be wired in Phase 6
-	fmt.Println("Styx v1 - Terminal AI Agent Harness")
-	fmt.Println("Provider:", rt.Config.Provider)
-	fmt.Println("Model:", rt.Config.Model)
+	if err := cli.NewRootCommand(rt).ExecuteContext(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }

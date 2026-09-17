@@ -8,6 +8,7 @@ import (
 	"github.com/jgerontis/styx/internal/config"
 	"github.com/jgerontis/styx/internal/event"
 	"github.com/jgerontis/styx/internal/log"
+	"github.com/jgerontis/styx/internal/provider"
 )
 
 // Runtime is the dependency injection container for the entire application.
@@ -15,17 +16,11 @@ type Runtime struct {
 	Config    *config.Config
 	Logger    *slog.Logger
 	Bus       event.Bus
-	Providers ProviderRegistry
+	Providers *provider.Registry
 	Tools     ToolRegistry
 	Skills    SkillRegistry
 	Approver  Approver
 	Store     SessionStore
-}
-
-// Placeholder interfaces; will be implemented in later phases.
-type ProviderRegistry interface {
-	// GetProvider(name string) (provider.Provider, error)
-	// Register(name string, p provider.Provider) error
 }
 
 type ToolRegistry interface {
@@ -62,13 +57,18 @@ func New(ctx context.Context) (*Runtime, error) {
 
 	// Create event bus
 	bus := event.NewBus()
+	providers := provider.NewRegistry()
+	if err := providers.Register("ollama", provider.NewOllamaProvider(cfg.BaseURL)); err != nil {
+		return nil, fmt.Errorf("register Ollama provider: %w", err)
+	}
 
 	// Create runtime
 	rt := &Runtime{
-		Config: cfg,
-		Logger: logger,
-		Bus:    bus,
-		// Providers, Tools, Skills, Approver, Store to be wired up in later phases
+		Config:    cfg,
+		Logger:    logger,
+		Bus:       bus,
+		Providers: providers,
+		// Tools, Skills, Approver, Store to be wired up in later phases
 	}
 
 	return rt, nil

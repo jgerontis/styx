@@ -81,7 +81,15 @@ skills/              built-in skills (agentskills.io format)
 
 ## Status
 
-Early development. Foundations (runtime, config, event bus, streaming providers) are in place; the tool layer, skills, and agent loop are being built out.
+### Milestones
+
+1. **Usable Ollama chat CLI** *(current)*: `styx chat` connects to Ollama, streams responses, preserves an in-memory conversation, and supports `/reset` and `/exit`.
+2. **Safe tool primitives**: add filesystem, search, edit, and shell tools with JSON Schema validation and approval policies.
+3. **Skills**: load agentskills.io-compatible `SKILL.md` bundles using progressive disclosure and `allowed-tools` permissions.
+4. **Plan/Test/Implement/Validate harness**: add isolated job phases, context assembly, and TDD-forward validation.
+5. **Durable sessions and refinement**: file-backed job artifacts, context-window strategies, and high-quality retry behavior.
+
+Early development. Foundations are in place; Milestone 1 is being built now.
 
 ## License
 
