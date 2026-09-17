@@ -84,7 +84,7 @@ skills/              built-in skills (agentskills.io format)
 ### Milestones
 
 1. **Usable Ollama chat CLI** *(complete)*: `styx chat` connects to Ollama, verifies the requested model, streams responses, preserves an in-memory conversation, and supports `/reset` and `/exit`.
-2. **Safe tool primitives** *(current)*: begin with grounded read-only workspace inspection, then add filesystem, search, edit, and shell tools with JSON Schema validation and approval policies. Current checkpoint: `styx chat` tells the model the active repository's root, name, and README description.
+2. **Safe tool primitives** *(current)*: begin with grounded read-only workspace inspection, then add filesystem, search, edit, and shell tools with JSON Schema validation and approval policies. Current checkpoint: `styx chat` gives the model a bounded `read_file` tool, rooted in the active repository, and returns requested line ranges through the Ollama tool-call loop.
 3. **Skills**: load agentskills.io-compatible `SKILL.md` bundles using progressive disclosure and `allowed-tools` permissions.
 4. **Plan/Test/Implement/Validate harness**: add isolated job phases, context assembly, and TDD-forward validation.
 5. **Durable sessions and refinement**: file-backed job artifacts, context-window strategies, and high-quality retry behavior.

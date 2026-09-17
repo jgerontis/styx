@@ -101,6 +101,72 @@ func TestRunChatRejectsUnavailableModel(t *testing.T) {
 	}
 }
 
+func TestRunChatExecutesReadFileToolCall(t *testing.T) {
+	var chatRequests []struct {
+		Messages []struct {
+			Role     string `json:"role"`
+			Content  string `json:"content"`
+			ToolName string `json:"tool_name"`
+		} `json:"messages"`
+		Tools []json.RawMessage `json:"tools"`
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			_, _ = w.Write([]byte(`{"models":[{"name":"test-model"}]}`))
+		case "/api/chat":
+			var request struct {
+				Messages []struct {
+					Role     string `json:"role"`
+					Content  string `json:"content"`
+					ToolName string `json:"tool_name"`
+				} `json:"messages"`
+				Tools []json.RawMessage `json:"tools"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode request: %v", err)
+				return
+			}
+			chatRequests = append(chatRequests, request)
+			if len(chatRequests) == 1 {
+				_, _ = w.Write([]byte(`{"message":{"tool_calls":[{"function":{"index":0,"name":"read_file","arguments":{"path":"README.md","start_line":1,"end_line":1}}}]}}` + "\n"))
+				_, _ = w.Write([]byte(`{"done":true}` + "\n"))
+				return
+			}
+			_, _ = w.Write([]byte(`{"message":{"content":"Styx is a terminal agent harness."}}` + "\n"))
+			_, _ = w.Write([]byte(`{"done":true}` + "\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	registry := provider.NewRegistry()
+	if err := registry.Register("ollama", provider.NewOllamaProvider(server.URL)); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	var output bytes.Buffer
+	if err := runChat(context.Background(), bytes.NewBufferString("describe the repository\n/exit\n"), &output, registry, "ollama", "test-model"); err != nil {
+		t.Fatalf("run chat: %v", err)
+	}
+
+	if len(chatRequests) != 2 {
+		t.Fatalf("expected tool follow-up request, got %d chat requests", len(chatRequests))
+	}
+	if len(chatRequests[0].Tools) != 1 {
+		t.Errorf("expected read_file schema in first request, got %d tools", len(chatRequests[0].Tools))
+	}
+	last := chatRequests[1].Messages[len(chatRequests[1].Messages)-1]
+	if last.Role != "tool" || last.ToolName != "read_file" || !strings.Contains(last.Content, "# Styx") {
+		t.Errorf("expected README result in follow-up, got %#v", last)
+	}
+	if !strings.Contains(output.String(), "Styx is a terminal agent harness.") {
+		t.Errorf("expected final answer, got %q", output.String())
+	}
+}
+
 func TestStreamToMessageWritesBeforeStreamCompletes(t *testing.T) {
 	allowFinish := make(chan struct{})
 	stream := &controlledStream{allowFinish: allowFinish}

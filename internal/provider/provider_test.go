@@ -37,8 +37,8 @@ func TestProviderCapabilities(t *testing.T) {
 	if !caps.Streaming {
 		t.Error("Ollama should support streaming")
 	}
-	if caps.ToolCalling {
-		t.Error("Ollama base should not support tool calling")
+	if !caps.ToolCalling {
+		t.Error("Ollama should support tool calling")
 	}
 }
 

@@ -38,6 +38,7 @@ type Message struct {
 	Role      Role
 	Content   []ContentPart // v1: typically just one text part; v2: multimodal
 	ToolCalls []ToolCall    // set on assistant role messages
+	ToolName  string        // set on tool role messages for Ollama compatibility
 	Timestamp time.Time
 }
 

@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/jgerontis/styx/internal/message"
 )
 
 // OllamaProvider is an implementation of the Provider interface for Ollama
@@ -101,6 +103,12 @@ func (op *OllamaProvider) Chat(ctx context.Context, req ChatRequest) (StreamRead
 			"role":    msg.Role,
 			"content": content,
 		}
+		if len(msg.ToolCalls) > 0 {
+			messages[i]["tool_calls"] = ollamaToolCalls(msg.ToolCalls)
+		}
+		if msg.ToolName != "" {
+			messages[i]["tool_name"] = msg.ToolName
+		}
 	}
 
 	body := map[string]interface{}{
@@ -108,6 +116,9 @@ func (op *OllamaProvider) Chat(ctx context.Context, req ChatRequest) (StreamRead
 		"messages":    messages,
 		"stream":      true,
 		"temperature": req.Temperature,
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = ollamaTools(req.Tools)
 	}
 
 	if req.MaxTokens > 0 {
@@ -139,11 +150,29 @@ func (op *OllamaProvider) Chat(ctx context.Context, req ChatRequest) (StreamRead
 	return &OllamaStreamReader{resp: resp}, nil
 }
 
+func ollamaTools(definitions []ToolDefinition) []map[string]interface{} {
+	tools := make([]map[string]interface{}, 0, len(definitions))
+	for _, definition := range definitions {
+		var schema interface{}
+		_ = json.Unmarshal(definition.Schema, &schema)
+		tools = append(tools, map[string]interface{}{"type": "function", "function": map[string]interface{}{"name": definition.Name, "description": definition.Description, "parameters": schema}})
+	}
+	return tools
+}
+
+func ollamaToolCalls(calls []message.ToolCall) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(calls))
+	for index, call := range calls {
+		result = append(result, map[string]interface{}{"type": "function", "function": map[string]interface{}{"index": index, "name": call.ToolName, "arguments": call.Args}})
+	}
+	return result
+}
+
 // Capabilities returns what Ollama supports.
 func (op *OllamaProvider) Capabilities() Capabilities {
 	return Capabilities{
 		Streaming:   true,
-		ToolCalling: false, // Ollama doesn't support function calling in base model
+		ToolCalling: true,
 		Vision:      false,
 		JSONMode:    false,
 	}
@@ -151,12 +180,18 @@ func (op *OllamaProvider) Capabilities() Capabilities {
 
 // OllamaStreamReader reads streaming responses from Ollama.
 type OllamaStreamReader struct {
-	resp   *http.Response
-	reader *bufio.Reader
+	resp    *http.Response
+	reader  *bufio.Reader
+	pending []ToolCallDelta
 }
 
 // Recv reads the next delta from the stream.
 func (osr *OllamaStreamReader) Recv() (Delta, error) {
+	if len(osr.pending) > 0 {
+		call := osr.pending[0]
+		osr.pending = osr.pending[1:]
+		return Delta{Type: "tool_call_end", ToolCall: &call}, nil
+	}
 	if osr.reader == nil {
 		osr.reader = bufio.NewReader(osr.resp.Body)
 	}
@@ -172,7 +207,14 @@ func (osr *OllamaStreamReader) Recv() (Delta, error) {
 	// Parse Ollama's streaming response format
 	var msg struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string `json:"content"`
+			ToolCalls []struct {
+				Function struct {
+					Index     int                    `json:"index"`
+					Name      string                 `json:"name"`
+					Arguments map[string]interface{} `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
 		} `json:"message"`
 		Done  bool `json:"done"`
 		Usage struct {
@@ -190,6 +232,13 @@ func (osr *OllamaStreamReader) Recv() (Delta, error) {
 			Type: "text",
 			Text: msg.Message.Content,
 		}, nil
+	}
+	if len(msg.Message.ToolCalls) > 0 {
+		for _, toolCall := range msg.Message.ToolCalls {
+			arguments, _ := json.Marshal(toolCall.Function.Arguments)
+			osr.pending = append(osr.pending, ToolCallDelta{ID: fmt.Sprintf("%d", toolCall.Function.Index), ToolName: toolCall.Function.Name, Args: arguments, Done: true})
+		}
+		return osr.Recv()
 	}
 
 	if msg.Done {

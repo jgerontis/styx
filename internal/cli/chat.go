@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -49,6 +50,10 @@ func runChat(ctx context.Context, input io.Reader, output io.Writer, providers *
 	if err != nil {
 		return err
 	}
+	tools := tool.NewRegistry()
+	if err := tools.Register(tool.NewReadFile(workspace.Root)); err != nil {
+		return err
+	}
 
 	fmt.Fprintf(output, "%s connected.\n", p.Name())
 	fmt.Fprintf(output, "Styx chat using %s/%s. Type /reset or /exit.\n", providerName, model)
@@ -77,22 +82,46 @@ func runChat(ctx context.Context, input io.Reader, output io.Writer, providers *
 		}
 
 		history = append(history, *message.NewTextMessage(message.RoleUser, prompt))
+		if err := runTurn(ctx, output, p, model, tools, &history); err != nil {
+			return err
+		}
+	}
+}
+
+func runTurn(ctx context.Context, output io.Writer, p provider.Provider, model string, tools *tool.Registry, history *[]message.Message) error {
+	for {
 		fmt.Fprint(output, "Assistant: ")
-		stream, err := p.Chat(ctx, provider.ChatRequest{Model: model, Messages: history})
+		stream, err := p.Chat(ctx, provider.ChatRequest{Model: model, Messages: *history, Tools: tools.Definitions()})
 		if err != nil {
-			return fmt.Errorf("chat with %s: %w", providerName, err)
+			return fmt.Errorf("chat with %s: %w", p.Name(), err)
 		}
 
 		response, err := streamToMessage(stream, output)
 		if err != nil {
 			return err
 		}
-		history = append(history, *response)
+		*history = append(*history, *response)
+		if len(response.ToolCalls) == 0 {
+			return nil
+		}
+
+		for _, call := range response.ToolCalls {
+			fmt.Fprintf(output, "Using %s...\n", call.ToolName)
+			result, err := tools.Execute(ctx, call.ToolName, call.Args)
+			if err != nil {
+				result = fmt.Sprintf("tool error: %v", err)
+			}
+			*history = append(*history, message.Message{
+				Role:     message.RoleTool,
+				ToolName: call.ToolName,
+				Content:  []message.ContentPart{{Type: "text", Text: result}},
+			})
+		}
 	}
 }
 
 func systemPrompt(workspace tool.WorkspaceSummary) string {
-	return fmt.Sprintf(`You are Styx, a terminal coding agent. Be precise and grounded in the workspace facts supplied below. For repository questions, state what is known and distinguish it from inference. Keep answers concise unless the user asks for detail.
+	return fmt.Sprintf(`You are Styx, a terminal coding agent. Be precise and grounded in the workspace facts supplied below. For repository questions, state what is known and distinguish it from inference. Use read_file to inspect only the relevant file and line range when repository details are needed. Keep answers concise unless the user asks for detail.
 
 Workspace root: %s
 Project: %s
@@ -118,12 +147,15 @@ func streamToMessage(stream provider.StreamReader, output io.Writer) (*message.M
 	defer stream.Close()
 
 	var content strings.Builder
+	var toolCalls []message.ToolCall
 	flusher, canFlush := output.(interface{ Flush() error })
 	for {
 		delta, err := stream.Recv()
 		if err == io.EOF {
 			fmt.Fprintln(output)
-			return message.NewTextMessage(message.RoleAssistant, content.String()), nil
+			response := message.NewTextMessage(message.RoleAssistant, content.String())
+			response.ToolCalls = toolCalls
+			return response, nil
 		}
 		if err != nil {
 			return nil, err
@@ -139,6 +171,13 @@ func streamToMessage(stream provider.StreamReader, output io.Writer) (*message.M
 		}
 		if delta.Type == "error" {
 			return nil, delta.Error
+		}
+		if delta.Type == "tool_call_end" && delta.ToolCall != nil {
+			var args map[string]interface{}
+			if err := json.Unmarshal(delta.ToolCall.Args, &args); err != nil {
+				return nil, fmt.Errorf("parse %s arguments: %w", delta.ToolCall.ToolName, err)
+			}
+			toolCalls = append(toolCalls, message.ToolCall{ID: delta.ToolCall.ID, ToolName: delta.ToolCall.ToolName, Args: args})
 		}
 	}
 }
