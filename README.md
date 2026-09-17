@@ -84,7 +84,7 @@ skills/              built-in skills (agentskills.io format)
 ### Milestones
 
 1. **Usable Ollama chat CLI** *(complete)*: `styx chat` connects to Ollama, verifies the requested model, streams responses, preserves an in-memory conversation, and supports `/reset` and `/exit`.
-2. **Safe tool primitives** *(current)*: begin with grounded read-only workspace inspection, then add filesystem, search, edit, and shell tools with JSON Schema validation and approval policies. Current checkpoint: `styx chat` gives the model a bounded `read_file` tool, rooted in the active repository, and returns requested line ranges through the Ollama tool-call loop.
+2. **Safe tool primitives** *(current)*: begin with grounded read-only workspace inspection, then add filesystem, search, edit, and shell tools with JSON Schema validation and approval policies. Current checkpoint: `styx chat` provides bounded `read_file`, literal `search_text`, and AST-aware `search_structure` tools rooted in the active repository. It returns results through the Ollama tool-call loop. `search_structure` requires the `ast-grep` executable on `PATH` or at `STYX_AST_GREP_PATH`.
 3. **Skills**: load agentskills.io-compatible `SKILL.md` bundles using progressive disclosure and `allowed-tools` permissions.
 4. **Plan/Test/Implement/Validate harness**: add isolated job phases, context assembly, and TDD-forward validation.
 5. **Durable sessions and refinement**: file-backed job artifacts, context-window strategies, and high-quality retry behavior.
@@ -112,6 +112,10 @@ Ensure that Go's binary directory is on your `PATH`. Run the full local pipeline
 ```bash
 make check
 ```
+
+### ast-grep Dependency
+
+`search_structure` uses the external [ast-grep](https://ast-grep.github.io/) executable for syntax-aware code search. Install it with your platform's package manager, then ensure `ast-grep` is on `PATH`. If it lives elsewhere, set `STYX_AST_GREP_PATH` to its full path. This works on macOS, Linux, and Windows (for example, `STYX_AST_GREP_PATH=C:\\Tools\\ast-grep.exe`).
 
 ## License
 

@@ -155,8 +155,15 @@ func TestRunChatExecutesReadFileToolCall(t *testing.T) {
 	if len(chatRequests) != 2 {
 		t.Fatalf("expected tool follow-up request, got %d chat requests", len(chatRequests))
 	}
-	if len(chatRequests[0].Tools) != 1 {
-		t.Errorf("expected read_file schema in first request, got %d tools", len(chatRequests[0].Tools))
+	foundReadFile := false
+	for _, definition := range chatRequests[0].Tools {
+		if strings.Contains(string(definition), `"name":"read_file"`) {
+			foundReadFile = true
+			break
+		}
+	}
+	if !foundReadFile {
+		t.Errorf("expected read_file schema in first request, got %s", chatRequests[0].Tools)
 	}
 	last := chatRequests[1].Messages[len(chatRequests[1].Messages)-1]
 	if last.Role != "tool" || last.ToolName != "read_file" || !strings.Contains(last.Content, "# Styx") {
