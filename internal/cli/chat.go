@@ -41,6 +41,9 @@ func runChat(ctx context.Context, input io.Reader, output io.Writer, providers *
 		return fmt.Errorf("connect to %s: %w", providerName, err)
 	}
 	defer p.Disconnect(context.Background())
+	if err := confirmModel(ctx, p, model); err != nil {
+		return err
+	}
 
 	fmt.Fprintf(output, "Styx chat using %s/%s. Type /reset or /exit.\n", providerName, model)
 	history := make([]message.Message, 0)
@@ -80,6 +83,21 @@ func runChat(ctx context.Context, input io.Reader, output io.Writer, providers *
 		}
 		history = append(history, *response)
 	}
+}
+
+func confirmModel(ctx context.Context, p provider.Provider, model string) error {
+	models, err := p.Models(ctx)
+	if err != nil {
+		return fmt.Errorf("list models from %s: %w", p.Name(), err)
+	}
+
+	for _, available := range models {
+		if available.ID == model {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("model %q is not available from %s; install it with `ollama pull %s`", model, p.Name(), model)
 }
 
 func streamToMessage(stream provider.StreamReader, output io.Writer) (*message.Message, error) {

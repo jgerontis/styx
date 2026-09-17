@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jgerontis/styx/internal/provider"
@@ -69,6 +70,27 @@ func TestRunChatStreamsAndResetsHistory(t *testing.T) {
 	}
 	if !bytes.Contains(output.Bytes(), []byte("hello from Styx")) {
 		t.Errorf("expected streamed response in output, got %q", output.String())
+	}
+}
+
+func TestRunChatRejectsUnavailableModel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tags" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"models":[{"name":"installed-model"}]}`))
+	}))
+	defer server.Close()
+
+	registry := provider.NewRegistry()
+	if err := registry.Register("ollama", provider.NewOllamaProvider(server.URL)); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	err := runChat(context.Background(), bytes.NewBufferString("/exit\n"), io.Discard, registry, "ollama", "missing-model")
+	if err == nil || !strings.Contains(err.Error(), "ollama pull missing-model") {
+		t.Fatalf("expected pull guidance for missing model, got %v", err)
 	}
 }
 
