@@ -1,17 +1,25 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/jgerontis/styx/internal/message"
+	"github.com/jgerontis/styx/internal/permission"
 	"github.com/jgerontis/styx/internal/provider"
+	"github.com/jgerontis/styx/internal/tool"
 )
 
 func TestRunChatStreamsAndResetsHistory(t *testing.T) {
@@ -171,6 +179,116 @@ func TestRunChatExecutesReadFileToolCall(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "Styx is a terminal agent harness.") {
 		t.Errorf("expected final answer, got %q", output.String())
+	}
+}
+
+func TestExecuteToolCallRequiresApprovalForEdits(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "example.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	tools := tool.NewRegistry()
+	if err := tools.Register(tool.NewEditFile(root)); err != nil {
+		t.Fatalf("register edit tool: %v", err)
+	}
+	digest := sha256.Sum256([]byte("before"))
+	anchor := fmt.Sprintf("1:%x", digest[:4])
+	call := message.ToolCall{ToolName: "edit_file", Args: map[string]interface{}{"path": "example.txt", "operations": []interface{}{map[string]interface{}{"kind": "replace", "anchor": anchor, "content": "after"}}, "apply": true}}
+	var output bytes.Buffer
+
+	result, err := executeToolCall(context.Background(), bufio.NewScanner(strings.NewReader("n\n")), &output, tools, permission.Policy{}, call)
+	if err != nil || result != "Edit was not approved." {
+		t.Fatalf("result = %q, error = %v", result, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "before\n" {
+		t.Fatalf("file = %q, error = %v", data, err)
+	}
+	if !strings.Contains(output.String(), "Preview:") {
+		t.Errorf("expected preview, got %q", output.String())
+	}
+}
+
+func TestExecuteToolCallAppliesApprovedEdit(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "example.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	tools := tool.NewRegistry()
+	if err := tools.Register(tool.NewEditFile(root)); err != nil {
+		t.Fatalf("register edit tool: %v", err)
+	}
+	digest := sha256.Sum256([]byte("before"))
+	call := message.ToolCall{ToolName: "edit_file", Args: map[string]interface{}{"path": "example.txt", "operations": []interface{}{map[string]interface{}{"kind": "replace", "anchor": fmt.Sprintf("1:%x", digest[:4]), "content": "after"}}, "apply": true}}
+
+	result, err := executeToolCall(context.Background(), bufio.NewScanner(strings.NewReader("y\n")), io.Discard, tools, permission.Policy{}, call)
+	if err != nil || !strings.HasPrefix(result, "Applied:") {
+		t.Fatalf("result = %q, error = %v", result, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "after\n" {
+		t.Fatalf("file = %q, error = %v", data, err)
+	}
+}
+
+func TestExecuteToolCallRequiresApprovalForCommands(t *testing.T) {
+	root := t.TempDir()
+	tools := tool.NewRegistry()
+	if err := tools.Register(tool.NewRunCommand(root)); err != nil {
+		t.Fatalf("register command tool: %v", err)
+	}
+	call := message.ToolCall{ToolName: "run_command", Args: map[string]interface{}{"program": "go", "args": []interface{}{"version"}}}
+	var output bytes.Buffer
+
+	result, err := executeToolCall(context.Background(), bufio.NewScanner(strings.NewReader("n\n")), &output, tools, permission.Policy{}, call)
+	if err != nil || result != "Command was not approved." {
+		t.Fatalf("result = %q, error = %v", result, err)
+	}
+	if !strings.Contains(output.String(), `Run command "go"?`) {
+		t.Errorf("expected command approval prompt, got %q", output.String())
+	}
+}
+
+func TestExecuteToolCallRunsApprovedCommand(t *testing.T) {
+	root := t.TempDir()
+	tools := tool.NewRegistry()
+	if err := tools.Register(tool.NewRunCommand(root)); err != nil {
+		t.Fatalf("register command tool: %v", err)
+	}
+	call := message.ToolCall{ToolName: "run_command", Args: map[string]interface{}{"program": "go", "args": []interface{}{"version"}}}
+
+	result, err := executeToolCall(context.Background(), bufio.NewScanner(strings.NewReader("y\n")), io.Discard, tools, permission.Policy{}, call)
+	if err != nil || !strings.HasPrefix(result, "go version ") {
+		t.Fatalf("result = %q, error = %v", result, err)
+	}
+}
+
+func TestToolCallGuardAllowsDifferentTools(t *testing.T) {
+	guard := newToolCallGuard(5, 2)
+	for _, toolName := range []string{"list_files", "search_text", "read_file", "edit_file", "read_file"} {
+		if err := guard.Observe(toolName); err != nil {
+			t.Fatalf("observe %q: %v", toolName, err)
+		}
+	}
+}
+
+func TestToolCallGuardStopsRepeatedTool(t *testing.T) {
+	guard := newToolCallGuard(10, 2)
+	_ = guard.Observe("edit_file")
+	_ = guard.Observe("edit_file")
+	if err := guard.Observe("edit_file"); err == nil || !strings.Contains(err.Error(), "3 times in a row") {
+		t.Fatalf("expected repeated-tool error, got %v", err)
+	}
+}
+
+func TestToolCallGuardStopsLongTurns(t *testing.T) {
+	guard := newToolCallGuard(2, 10)
+	_ = guard.Observe("list_files")
+	_ = guard.Observe("search_text")
+	if err := guard.Observe("read_file"); err == nil || !strings.Contains(err.Error(), "limit of 2") {
+		t.Fatalf("expected call-limit error, got %v", err)
 	}
 }
 

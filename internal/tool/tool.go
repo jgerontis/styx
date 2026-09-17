@@ -3,9 +3,11 @@ package tool
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/jgerontis/styx/internal/provider"
+	"github.com/xeipuuv/gojsonschema"
 )
 
 // Tool is a model-callable workspace capability.
@@ -58,5 +60,23 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]int
 	if !ok {
 		return "", fmt.Errorf("tool %q is not available", name)
 	}
+	if err := validateArguments(tool.Definition(), args); err != nil {
+		return "", fmt.Errorf("invalid arguments for %s: %w", name, err)
+	}
 	return tool.Execute(ctx, args)
+}
+
+func validateArguments(definition provider.ToolDefinition, args map[string]interface{}) error {
+	result, err := gojsonschema.Validate(gojsonschema.NewStringLoader(string(definition.Schema)), gojsonschema.NewGoLoader(args))
+	if err != nil {
+		return err
+	}
+	if result.Valid() {
+		return nil
+	}
+	var messages []string
+	for _, validationError := range result.Errors() {
+		messages = append(messages, validationError.String())
+	}
+	return fmt.Errorf("%s", strings.Join(messages, "; "))
 }

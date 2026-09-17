@@ -9,7 +9,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jgerontis/styx/internal/config"
 	"github.com/jgerontis/styx/internal/message"
+	"github.com/jgerontis/styx/internal/permission"
 	"github.com/jgerontis/styx/internal/provider"
 	"github.com/jgerontis/styx/internal/runtime"
 	"github.com/jgerontis/styx/internal/tool"
@@ -26,7 +28,7 @@ func newChatCommand(rt *runtime.Runtime) *cobra.Command {
 			if model == "" {
 				model = rt.Config.Model
 			}
-			return runChat(cmd.Context(), os.Stdin, os.Stdout, rt.Providers, rt.Config.Provider, model)
+			return runChatWithLimits(cmd.Context(), os.Stdin, os.Stdout, rt.Providers, rt.Config.Provider, model, rt.Config.LoopMaxIterations, rt.Config.LoopMaxSameToolCalls)
 		},
 	}
 
@@ -35,6 +37,10 @@ func newChatCommand(rt *runtime.Runtime) *cobra.Command {
 }
 
 func runChat(ctx context.Context, input io.Reader, output io.Writer, providers *provider.Registry, providerName, model string) error {
+	return runChatWithLimits(ctx, input, output, providers, providerName, model, config.DefaultLoopMaxIterations, config.DefaultLoopMaxSameToolCalls)
+}
+
+func runChatWithLimits(ctx context.Context, input io.Reader, output io.Writer, providers *provider.Registry, providerName, model string, maxToolCalls, maxSameToolCalls int) error {
 	p, err := providers.Get(providerName)
 	if err != nil {
 		return err
@@ -52,6 +58,15 @@ func runChat(ctx context.Context, input io.Reader, output io.Writer, providers *
 	}
 	tools := tool.NewRegistry()
 	if err := tools.Register(tool.NewReadFile(workspace.Root)); err != nil {
+		return err
+	}
+	if err := tools.Register(tool.NewEditFile(workspace.Root)); err != nil {
+		return err
+	}
+	if err := tools.Register(tool.NewWriteFile(workspace.Root)); err != nil {
+		return err
+	}
+	if err := tools.Register(tool.NewRunCommand(workspace.Root)); err != nil {
 		return err
 	}
 	if err := tools.Register(tool.NewListFiles(workspace.Root)); err != nil {
@@ -91,13 +106,18 @@ func runChat(ctx context.Context, input io.Reader, output io.Writer, providers *
 		}
 
 		history = append(history, *message.NewTextMessage(message.RoleUser, prompt))
-		if err := runTurn(ctx, output, p, model, tools, &history); err != nil {
+		if err := runTurnWithLimits(ctx, output, scanner, p, model, tools, &history, maxToolCalls, maxSameToolCalls); err != nil {
 			return err
 		}
 	}
 }
 
-func runTurn(ctx context.Context, output io.Writer, p provider.Provider, model string, tools *tool.Registry, history *[]message.Message) error {
+func runTurn(ctx context.Context, output io.Writer, input *bufio.Scanner, p provider.Provider, model string, tools *tool.Registry, history *[]message.Message) error {
+	return runTurnWithLimits(ctx, output, input, p, model, tools, history, config.DefaultLoopMaxIterations, config.DefaultLoopMaxSameToolCalls)
+}
+
+func runTurnWithLimits(ctx context.Context, output io.Writer, input *bufio.Scanner, p provider.Provider, model string, tools *tool.Registry, history *[]message.Message, maxToolCalls, maxSameToolCalls int) error {
+	guard := newToolCallGuard(maxToolCalls, maxSameToolCalls)
 	for {
 		fmt.Fprint(output, "Assistant: ")
 		stream, err := p.Chat(ctx, provider.ChatRequest{Model: model, Messages: *history, Tools: tools.Definitions()})
@@ -115,8 +135,12 @@ func runTurn(ctx context.Context, output io.Writer, p provider.Provider, model s
 		}
 
 		for _, call := range response.ToolCalls {
+			if err := guard.Observe(call.ToolName); err != nil {
+				fmt.Fprintf(output, "Agent stopped this turn: %v\n", err)
+				return nil
+			}
 			fmt.Fprintf(output, "Using %s...\n", call.ToolName)
-			result, err := tools.Execute(ctx, call.ToolName, call.Args)
+			result, err := executeToolCall(ctx, input, output, tools, permission.Policy{}, call)
 			if err != nil {
 				result = fmt.Sprintf("tool error: %v", err)
 			}
@@ -129,8 +153,85 @@ func runTurn(ctx context.Context, output io.Writer, p provider.Provider, model s
 	}
 }
 
+type toolCallGuard struct {
+	maxCalls        int
+	maxSameTool     int
+	calls           int
+	previousTool    string
+	consecutiveSame int
+}
+
+func newToolCallGuard(maxCalls, maxSameTool int) *toolCallGuard {
+	return &toolCallGuard{maxCalls: maxCalls, maxSameTool: maxSameTool}
+}
+
+func (g *toolCallGuard) Observe(toolName string) error {
+	g.calls++
+	if g.calls > g.maxCalls {
+		return fmt.Errorf("tool-call limit of %d reached", g.maxCalls)
+	}
+	if toolName == g.previousTool {
+		g.consecutiveSame++
+	} else {
+		g.previousTool = toolName
+		g.consecutiveSame = 1
+	}
+	if g.consecutiveSame > g.maxSameTool {
+		return fmt.Errorf("%s called %d times in a row", toolName, g.consecutiveSame)
+	}
+	return nil
+}
+
+func executeToolCall(ctx context.Context, input *bufio.Scanner, output io.Writer, tools *tool.Registry, policy permission.Policy, call message.ToolCall) (string, error) {
+	if policy.Check(call.ToolName) == permission.Allow {
+		return tools.Execute(ctx, call.ToolName, call.Args)
+	}
+	if call.ToolName == "run_command" {
+		return confirmCommand(ctx, input, output, tools, call)
+	}
+	if call.Args["apply"] != true {
+		return tools.Execute(ctx, call.ToolName, call.Args)
+	}
+
+	previewArgs := make(map[string]interface{}, len(call.Args))
+	for key, value := range call.Args {
+		previewArgs[key] = value
+	}
+	previewArgs["apply"] = false
+	preview, err := tools.Execute(ctx, call.ToolName, previewArgs)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(output, "%s\nApply this edit? [y/N] ", preview)
+	if !input.Scan() {
+		if err := input.Err(); err != nil {
+			return "", err
+		}
+		return "Edit was not approved.", nil
+	}
+	if strings.ToLower(strings.TrimSpace(input.Text())) != "y" {
+		return "Edit was not approved.", nil
+	}
+	return tools.Execute(ctx, call.ToolName, call.Args)
+}
+
+func confirmCommand(ctx context.Context, input *bufio.Scanner, output io.Writer, tools *tool.Registry, call message.ToolCall) (string, error) {
+	program, _ := call.Args["program"].(string)
+	fmt.Fprintf(output, "Run command %q? [y/N] ", program)
+	if !input.Scan() {
+		if err := input.Err(); err != nil {
+			return "", err
+		}
+		return "Command was not approved.", nil
+	}
+	if strings.ToLower(strings.TrimSpace(input.Text())) != "y" {
+		return "Command was not approved.", nil
+	}
+	return tools.Execute(ctx, call.ToolName, call.Args)
+}
+
 func systemPrompt(workspace tool.WorkspaceSummary) string {
-	return fmt.Sprintf(`You are Styx, a terminal coding agent. Be precise and grounded in the workspace facts supplied below. For repository questions, state what is known and distinguish it from inference. Use list_files to map an unfamiliar layout without reading content. Use search_text first to find names, strings, configuration, documentation, or relevant files and infer the language from file extensions. Use search_structure only for syntax-shaped questions such as declarations, imports, calls, or components. Its pattern must be valid code in the required language; use $NAME for one node and $$$NODES for zero or more nodes. Start with the smallest pattern that answers the question. If it has no matches, remove one constraint and retry once, then use search_text. Use read_file for only the necessary line range. Keep answers concise unless the user asks for detail.
+	return fmt.Sprintf(`You are Styx, a terminal coding agent. Be precise and grounded in the workspace facts supplied below. For repository questions, state what is known and distinguish it from inference. Use list_files to map an unfamiliar layout without reading content. Use search_text first to find names, strings, configuration, documentation, or relevant files and infer the language from file extensions. Use search_structure only for syntax-shaped questions such as declarations, imports, calls, or components. Its pattern must be valid code in the required language; use $NAME for one node and $$$NODES for zero or more nodes. Start with the smallest pattern that answers the question. If it has no matches, remove one constraint and retry once, then use search_text. Use read_file for only the necessary line range. Each returned line has a line:hash anchor; retain fresh anchors for future edits and re-read after any stale-anchor error. To edit one file, use one edit_file call containing every change in its operations array, with fresh anchors. Styx previews each patch and asks once before writing. Use write_file only for a new file; it refuses to overwrite. Use run_command for focused test or build commands; it always asks for approval. Keep answers concise unless the user asks for detail.
 
 Workspace root: %s
 Project: %s

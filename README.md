@@ -84,12 +84,12 @@ skills/              built-in skills (agentskills.io format)
 ### Milestones
 
 1. **Usable Ollama chat CLI** *(complete)*: `styx chat` connects to Ollama, verifies the requested model, streams responses, preserves an in-memory conversation, and supports `/reset` and `/exit`.
-2. **Safe tool primitives** *(current)*: begin with grounded read-only workspace inspection, then add filesystem, search, edit, and shell tools with JSON Schema validation and approval policies. Current checkpoint: `styx chat` provides bounded `list_files`, `read_file`, literal `search_text`, and AST-aware `search_structure` tools rooted in the active repository. It returns results through the Ollama tool-call loop. `search_structure` requires the `ast-grep` executable on `PATH` or at `STYX_AST_GREP_PATH`.
+2. **Safe tool primitives** *(complete)*: grounded workspace inspection; bounded `list_files`, hash-anchored `read_file`, literal `search_text`, AST-aware `search_structure`, atomic multi-operation `edit_file`, new-file-only `write_file`, and timeout-bounded `run_command` tools. JSON Schema validation rejects malformed calls before execution. Read-only tools auto-run; writes and commands receive one user approval. `search_structure` requires the `ast-grep` executable on `PATH` or at `STYX_AST_GREP_PATH`.
 3. **Skills**: load agentskills.io-compatible `SKILL.md` bundles using progressive disclosure and `allowed-tools` permissions.
 4. **Plan/Test/Implement/Validate harness**: add isolated job phases, context assembly, and TDD-forward validation.
 5. **Durable sessions and refinement**: file-backed job artifacts, context-window strategies, and high-quality retry behavior.
 
-Early development. Milestone 1 is complete; safe tool primitives are next.
+Early development. Milestones 1 and 2 are complete; Skills are next.
 
 ## Build and Install
 
