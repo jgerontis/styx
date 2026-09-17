@@ -1,6 +1,11 @@
 package provider
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/jgerontis/styx/internal/message"
@@ -51,6 +56,7 @@ func TestChatRequest(t *testing.T) {
 		},
 		Temperature: 0.7,
 		MaxTokens:   100,
+		Think:       false,
 	}
 
 	if req.Model != "llama2" {
@@ -58,5 +64,31 @@ func TestChatRequest(t *testing.T) {
 	}
 	if len(req.Messages) != 1 {
 		t.Errorf("expected 1 message, got %d", len(req.Messages))
+	}
+}
+
+func TestOllamaChatSendsThinkAndTokenLimit(t *testing.T) {
+	var request map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte("{\"done\":true}\n"))
+	}))
+	defer server.Close()
+
+	stream, err := NewOllamaProvider(server.URL).Chat(context.Background(), ChatRequest{Model: "test", Think: false, MaxTokens: 123})
+	if err != nil {
+		t.Fatalf("chat: %v", err)
+	}
+	defer stream.Close()
+	if _, err := stream.Recv(); err != nil && err != io.EOF {
+		t.Fatalf("read stream: %v", err)
+	}
+	if request["think"] != false {
+		t.Errorf("think = %v, want false", request["think"])
+	}
+	if request["num_predict"] != float64(123) {
+		t.Errorf("num_predict = %v, want 123", request["num_predict"])
 	}
 }

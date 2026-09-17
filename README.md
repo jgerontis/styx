@@ -73,6 +73,10 @@ skills/              built-in skills (agentskills.io format)
 - **Approval as a first-class concern.** Read-only operations auto-run outside system paths; writes, edits, and shell commands prompt. `allowed-tools` from a skill pre-approves specific tools.
 - **Replace-versioning for artifacts.** Only the latest plan and implementation are retained; a short note records "tried X, it failed because Y" so nothing important is lost while stale code never lingers in context.
 
+### Agent modes
+
+Modes compose the shared harness rather than duplicate it. Each mode owns its system prompt, context assembler, and allowed tool subset; providers, streaming, tool validation, approval, and loop guards remain shared. Planned modes are `chat` for exploration, `plan` for read-only decomposition, `implement` for supervised changes, `validate` for focused checks, and `work` for the full Plan → Test → Implement → Validate cycle.
+
 ## Scope (v1)
 
 **In:** streaming providers (Ollama, OpenAI), built-in tools (fs / shell / search / edit), the 4-phase TDD loop, agentskills.io skills, permissions + middleware, event bus, file-based sessions, Cobra CLI/REPL.
@@ -84,12 +88,12 @@ skills/              built-in skills (agentskills.io format)
 ### Milestones
 
 1. **Usable Ollama chat CLI** *(complete)*: `styx chat` connects to Ollama, verifies the requested model, streams responses, preserves an in-memory conversation, and supports `/reset` and `/exit`.
-2. **Safe tool primitives** *(complete)*: grounded workspace inspection; bounded `list_files`, hash-anchored `read_file`, literal `search_text`, AST-aware `search_structure`, atomic multi-operation `edit_file`, new-file-only `write_file`, and timeout-bounded `run_command` tools. JSON Schema validation rejects malformed calls before execution. Read-only tools auto-run; writes and commands receive one user approval. `search_structure` requires the `ast-grep` executable on `PATH` or at `STYX_AST_GREP_PATH`.
-3. **Skills**: load agentskills.io-compatible `SKILL.md` bundles using progressive disclosure and `allowed-tools` permissions.
+2. **Safe tool primitives** *(complete)*: grounded workspace inspection; bounded `list_files`, line-ranged `read_file`, literal `search_text`, AST-aware `search_structure`, exact-match `edit_file`, new-file-only `write_file`, and timeout-bounded `run_command` tools. JSON Schema validation rejects malformed calls before execution. Read-only tools auto-run; writes and commands receive one user approval. `search_structure` requires the `ast-grep` executable on `PATH` or at `STYX_AST_GREP_PATH`.
+3. **Skills** *(current)*: load agentskills.io-compatible `SKILL.md` bundles using progressive disclosure and `allowed-tools` permissions.
 4. **Plan/Test/Implement/Validate harness**: add isolated job phases, context assembly, and TDD-forward validation.
 5. **Durable sessions and refinement**: file-backed job artifacts, context-window strategies, and high-quality retry behavior.
 
-Early development. Milestones 1 and 2 are complete; Skills are next.
+Early development. Milestones 1 and 2 are complete; Skills are in progress.
 
 ## Build and Install
 
@@ -116,6 +120,15 @@ make check
 ### ast-grep Dependency
 
 `search_structure` uses the external [ast-grep](https://ast-grep.github.io/) executable for syntax-aware code search. Install it with your platform's package manager, then ensure `ast-grep` is on `PATH`. If it lives elsewhere, set `STYX_AST_GREP_PATH` to its full path. This works on macOS, Linux, and Windows (for example, `STYX_AST_GREP_PATH=C:\\Tools\\ast-grep.exe`).
+
+### Skills
+
+Styx discovers [Agent Skills](https://agentskills.io) from three layers: built-ins embedded in the executable, global `~/.styx/skills/`, and repository-local `.styx/skills/`. A skill is a directory containing `SKILL.md` with required `name` and `description` YAML frontmatter. Later layers override earlier skills with the same name, so repository-local skills override global skills, and global skills override built-ins. Metadata is loaded by `styx skills list`; instructions are loaded only by `styx skills show <name>` or future mode activation.
+
+```bash
+styx skills list
+styx skills show code-review
+```
 
 ## License
 

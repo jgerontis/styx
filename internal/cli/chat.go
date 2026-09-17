@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/jgerontis/styx/internal/config"
@@ -14,6 +15,7 @@ import (
 	"github.com/jgerontis/styx/internal/permission"
 	"github.com/jgerontis/styx/internal/provider"
 	"github.com/jgerontis/styx/internal/runtime"
+	"github.com/jgerontis/styx/internal/skill"
 	"github.com/jgerontis/styx/internal/tool"
 	"github.com/spf13/cobra"
 )
@@ -78,10 +80,18 @@ func runChatWithLimits(ctx context.Context, input io.Reader, output io.Writer, p
 	if err := tools.Register(tool.NewSearchStructure(workspace.Root)); err != nil {
 		return err
 	}
+	skills, err := discoverSkillsForChat(workspace.Root)
+	if err != nil {
+		return err
+	}
+	loader := tool.NewLoadSkill(skills)
+	if err := tools.Register(loader); err != nil {
+		return err
+	}
 
 	fmt.Fprintf(output, "%s connected.\n", p.Name())
 	fmt.Fprintf(output, "Styx chat using %s/%s. Type /reset or /exit.\n", providerName, model)
-	history := []message.Message{*message.NewTextMessage(message.RoleSystem, systemPrompt(workspace))}
+	history := []message.Message{*message.NewTextMessage(message.RoleSystem, systemPrompt(workspace, skills.All()))}
 	scanner := bufio.NewScanner(input)
 
 	for {
@@ -106,21 +116,23 @@ func runChatWithLimits(ctx context.Context, input io.Reader, output io.Writer, p
 		}
 
 		history = append(history, *message.NewTextMessage(message.RoleUser, prompt))
-		if err := runTurnWithLimits(ctx, output, scanner, p, model, tools, &history, maxToolCalls, maxSameToolCalls); err != nil {
+		if err := runTurnWithLimits(ctx, output, scanner, p, model, tools, loader, &history, maxToolCalls, maxSameToolCalls); err != nil {
 			return err
 		}
 	}
 }
 
 func runTurn(ctx context.Context, output io.Writer, input *bufio.Scanner, p provider.Provider, model string, tools *tool.Registry, history *[]message.Message) error {
-	return runTurnWithLimits(ctx, output, input, p, model, tools, history, config.DefaultLoopMaxIterations, config.DefaultLoopMaxSameToolCalls)
+	return runTurnWithLimits(ctx, output, input, p, model, tools, nil, history, config.DefaultLoopMaxIterations, config.DefaultLoopMaxSameToolCalls)
 }
 
-func runTurnWithLimits(ctx context.Context, output io.Writer, input *bufio.Scanner, p provider.Provider, model string, tools *tool.Registry, history *[]message.Message, maxToolCalls, maxSameToolCalls int) error {
+func runTurnWithLimits(ctx context.Context, output io.Writer, input *bufio.Scanner, p provider.Provider, model string, tools *tool.Registry, loader *tool.LoadSkill, history *[]message.Message, maxToolCalls, maxSameToolCalls int) error {
 	guard := newToolCallGuard(maxToolCalls, maxSameToolCalls)
+	failures := make(map[string]int)
+	policy := permission.Policy{}
 	for {
 		fmt.Fprint(output, "Assistant: ")
-		stream, err := p.Chat(ctx, provider.ChatRequest{Model: model, Messages: *history, Tools: tools.Definitions()})
+		stream, err := p.Chat(ctx, provider.ChatRequest{Model: model, Messages: *history, Tools: tools.Definitions(), MaxTokens: 1024, Think: false})
 		if err != nil {
 			return fmt.Errorf("chat with %s: %w", p.Name(), err)
 		}
@@ -140,17 +152,36 @@ func runTurnWithLimits(ctx context.Context, output io.Writer, input *bufio.Scann
 				return nil
 			}
 			fmt.Fprintf(output, "Using %s...\n", call.ToolName)
-			result, err := executeToolCall(ctx, input, output, tools, permission.Policy{}, call)
+			result, err := executeToolCall(ctx, input, output, tools, policy, call)
 			if err != nil {
 				result = fmt.Sprintf("tool error: %v", err)
+				fmt.Fprintf(output, "Tool failed: %s\n", result)
+				failures[call.ToolName]++
+				if isMutationTool(call.ToolName) && failures[call.ToolName] >= 2 {
+					fmt.Fprintf(output, "Agent stopped this turn: %s failed twice; re-read the file and try again.\n", call.ToolName)
+					return nil
+				}
+			} else {
+				failures[call.ToolName] = 0
 			}
 			*history = append(*history, message.Message{
 				Role:     message.RoleTool,
 				ToolName: call.ToolName,
 				Content:  []message.ContentPart{{Type: "text", Text: result}},
 			})
+			if err == nil && call.ToolName == "load_skill" && loader != nil {
+				if name, ok := call.Args["name"].(string); ok {
+					if selected, ok := loader.Skill(name); ok {
+						policy.AllowedTools = append(policy.AllowedTools, selected.AllowedToolNames()...)
+					}
+				}
+			}
 		}
 	}
+}
+
+func isMutationTool(toolName string) bool {
+	return toolName == "edit_file" || toolName == "write_file" || toolName == "run_command"
 }
 
 type toolCallGuard struct {
@@ -189,10 +220,13 @@ func executeToolCall(ctx context.Context, input *bufio.Scanner, output io.Writer
 	if call.ToolName == "run_command" {
 		return confirmCommand(ctx, input, output, tools, call)
 	}
-	if call.Args["apply"] != true {
+	if call.ToolName != "edit_file" && call.ToolName != "write_file" {
 		return tools.Execute(ctx, call.ToolName, call.Args)
 	}
+	return confirmMutation(ctx, input, output, tools, call)
+}
 
+func confirmMutation(ctx context.Context, input *bufio.Scanner, output io.Writer, tools *tool.Registry, call message.ToolCall) (string, error) {
 	previewArgs := make(map[string]interface{}, len(call.Args))
 	for key, value := range call.Args {
 		previewArgs[key] = value
@@ -202,17 +236,22 @@ func executeToolCall(ctx context.Context, input *bufio.Scanner, output io.Writer
 	if err != nil {
 		return "", err
 	}
-	fmt.Fprintf(output, "%s\nApply this edit? [y/N] ", preview)
+	fmt.Fprintf(output, "%s\nApply this change? [y/N] ", preview)
 	if !input.Scan() {
 		if err := input.Err(); err != nil {
 			return "", err
 		}
-		return "Edit was not approved.", nil
+		return "Change was not approved.", nil
 	}
 	if strings.ToLower(strings.TrimSpace(input.Text())) != "y" {
-		return "Edit was not approved.", nil
+		return "Change was not approved.", nil
 	}
-	return tools.Execute(ctx, call.ToolName, call.Args)
+	applyArgs := make(map[string]interface{}, len(call.Args)+1)
+	for key, value := range call.Args {
+		applyArgs[key] = value
+	}
+	applyArgs["apply"] = true
+	return tools.Execute(ctx, call.ToolName, applyArgs)
 }
 
 func confirmCommand(ctx context.Context, input *bufio.Scanner, output io.Writer, tools *tool.Registry, call message.ToolCall) (string, error) {
@@ -230,12 +269,38 @@ func confirmCommand(ctx context.Context, input *bufio.Scanner, output io.Writer,
 	return tools.Execute(ctx, call.ToolName, call.Args)
 }
 
-func systemPrompt(workspace tool.WorkspaceSummary) string {
-	return fmt.Sprintf(`You are Styx, a terminal coding agent. Be precise and grounded in the workspace facts supplied below. For repository questions, state what is known and distinguish it from inference. Use list_files to map an unfamiliar layout without reading content. Use search_text first to find names, strings, configuration, documentation, or relevant files and infer the language from file extensions. Use search_structure only for syntax-shaped questions such as declarations, imports, calls, or components. Its pattern must be valid code in the required language; use $NAME for one node and $$$NODES for zero or more nodes. Start with the smallest pattern that answers the question. If it has no matches, remove one constraint and retry once, then use search_text. Use read_file for only the necessary line range. Each returned line has a line:hash anchor; retain fresh anchors for future edits and re-read after any stale-anchor error. To edit one file, use one edit_file call containing every change in its operations array, with fresh anchors. Styx previews each patch and asks once before writing. Use write_file only for a new file; it refuses to overwrite. Use run_command for focused test or build commands; it always asks for approval. Keep answers concise unless the user asks for detail.
+func systemPrompt(workspace tool.WorkspaceSummary, skills []skill.Skill) string {
+	return fmt.Sprintf(`You are Styx, a precise terminal coding agent. Ground repository answers in tool results and distinguish facts from inferences. Preserve the user's requested document structure: when asked to add a paragraph, insert a standalone paragraph rather than modifying a nearby bullet or sentence unless explicitly asked to do so. Choose the narrowest tool that answers the question: map with list_files, discover literals with search_text, inspect syntax with search_structure, then read only relevant lines. Use one edit_file call per change with exact old_string copied from read_file (without its line prefix) and the desired new_string; include surrounding lines when the old text is not unique. For edit_file and write_file, propose the change only; Styx handles preview and approval. Use focused tests or builds to validate changes. Mutating tools and commands require user approval. Load a Skill only when its catalog description matches the task; do not assume its instructions before loading it. Keep answers concise unless the user asks for detail.
 
 Workspace root: %s
 Project: %s
-Repository description: %s`, workspace.Root, workspace.ProjectName, workspace.Description)
+Repository description: %s
+
+Available Skills:
+%s`, workspace.Root, workspace.ProjectName, workspace.Description, formatSkillCatalog(skills))
+}
+
+func discoverSkillsForChat(workspaceRoot string) (*skill.Registry, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	registry := skill.NewRegistryWithBuiltins(skill.Builtins(), filepath.Join(home, ".styx", "skills"), filepath.Join(workspaceRoot, ".styx", "skills"))
+	if err := registry.Discover(); err != nil {
+		return nil, err
+	}
+	return registry, nil
+}
+
+func formatSkillCatalog(skills []skill.Skill) string {
+	if len(skills) == 0 {
+		return "(none)"
+	}
+	lines := make([]string, 0, len(skills))
+	for _, available := range skills {
+		lines = append(lines, "- "+available.Name+": "+available.Description)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func confirmModel(ctx context.Context, p provider.Provider, model string) error {

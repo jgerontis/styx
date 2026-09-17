@@ -18,14 +18,8 @@ func TestReadFileReadsRequestedLineRange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read file: %v", err)
 	}
-	if result != "2:3fc4ccfe | two\n" {
+	if result != "2: two\n" {
 		t.Errorf("result = %q", result)
-	}
-}
-
-func TestLineHashIsStable(t *testing.T) {
-	if got := lineHash("two"); got != "3fc4ccfe" {
-		t.Errorf("line hash = %q", got)
 	}
 }
 

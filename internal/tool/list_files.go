@@ -29,7 +29,7 @@ func NewListFiles(root string) *ListFiles {
 func (t *ListFiles) Definition() provider.ToolDefinition {
 	return provider.ToolDefinition{
 		Name:        "list_files",
-		Description: "List files and directories in the workspace without reading file contents. Use this to understand an unfamiliar repository layout before searching or reading files.",
+		Description: "List a bounded workspace file tree without reading file contents. Use first to orient in an unfamiliar repository.",
 		Schema:      json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Optional workspace-relative directory"},"max_depth":{"type":"integer","minimum":0,"maximum":10,"description":"Maximum directory depth, default 2"},"max_results":{"type":"integer","minimum":1,"maximum":500,"description":"Maximum entries to return, default 100"}}}`),
 	}
 }

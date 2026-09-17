@@ -4,9 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -109,6 +107,13 @@ func TestRunChatRejectsUnavailableModel(t *testing.T) {
 	}
 }
 
+func TestSystemPromptPreservesRequestedDocumentStructure(t *testing.T) {
+	prompt := systemPrompt(tool.WorkspaceSummary{}, nil)
+	if !strings.Contains(prompt, "add a paragraph, insert a standalone paragraph") {
+		t.Errorf("system prompt does not preserve paragraph requests: %q", prompt)
+	}
+}
+
 func TestRunChatExecutesReadFileToolCall(t *testing.T) {
 	var chatRequests []struct {
 		Messages []struct {
@@ -192,13 +197,11 @@ func TestExecuteToolCallRequiresApprovalForEdits(t *testing.T) {
 	if err := tools.Register(tool.NewEditFile(root)); err != nil {
 		t.Fatalf("register edit tool: %v", err)
 	}
-	digest := sha256.Sum256([]byte("before"))
-	anchor := fmt.Sprintf("1:%x", digest[:4])
-	call := message.ToolCall{ToolName: "edit_file", Args: map[string]interface{}{"path": "example.txt", "operations": []interface{}{map[string]interface{}{"kind": "replace", "anchor": anchor, "content": "after"}}, "apply": true}}
+	call := message.ToolCall{ToolName: "edit_file", Args: map[string]interface{}{"path": "example.txt", "old_string": "before", "new_string": "after"}}
 	var output bytes.Buffer
 
 	result, err := executeToolCall(context.Background(), bufio.NewScanner(strings.NewReader("n\n")), &output, tools, permission.Policy{}, call)
-	if err != nil || result != "Edit was not approved." {
+	if err != nil || result != "Change was not approved." {
 		t.Fatalf("result = %q, error = %v", result, err)
 	}
 	data, err := os.ReadFile(path)
@@ -220,8 +223,7 @@ func TestExecuteToolCallAppliesApprovedEdit(t *testing.T) {
 	if err := tools.Register(tool.NewEditFile(root)); err != nil {
 		t.Fatalf("register edit tool: %v", err)
 	}
-	digest := sha256.Sum256([]byte("before"))
-	call := message.ToolCall{ToolName: "edit_file", Args: map[string]interface{}{"path": "example.txt", "operations": []interface{}{map[string]interface{}{"kind": "replace", "anchor": fmt.Sprintf("1:%x", digest[:4]), "content": "after"}}, "apply": true}}
+	call := message.ToolCall{ToolName: "edit_file", Args: map[string]interface{}{"path": "example.txt", "old_string": "before", "new_string": "after"}}
 
 	result, err := executeToolCall(context.Background(), bufio.NewScanner(strings.NewReader("y\n")), io.Discard, tools, permission.Policy{}, call)
 	if err != nil || !strings.HasPrefix(result, "Applied:") {
@@ -289,6 +291,17 @@ func TestToolCallGuardStopsLongTurns(t *testing.T) {
 	_ = guard.Observe("search_text")
 	if err := guard.Observe("read_file"); err == nil || !strings.Contains(err.Error(), "limit of 2") {
 		t.Fatalf("expected call-limit error, got %v", err)
+	}
+}
+
+func TestIsMutationTool(t *testing.T) {
+	for _, toolName := range []string{"edit_file", "write_file", "run_command"} {
+		if !isMutationTool(toolName) {
+			t.Errorf("expected %s to be a mutation tool", toolName)
+		}
+	}
+	if isMutationTool("read_file") {
+		t.Error("read_file should not be a mutation tool")
 	}
 }
 

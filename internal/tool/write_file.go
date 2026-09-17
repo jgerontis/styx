@@ -17,7 +17,7 @@ type WriteFile struct{ root string }
 func NewWriteFile(root string) *WriteFile { return &WriteFile{root: root} }
 
 func (t *WriteFile) Definition() provider.ToolDefinition {
-	return provider.ToolDefinition{Name: "write_file", Description: "Create a new file in the workspace. Refuses to overwrite an existing file. First call with apply=false to preview, then apply=true after user approval.", Schema: json.RawMessage(`{"type":"object","required":["path","content","apply"],"properties":{"path":{"type":"string"},"content":{"type":"string"},"apply":{"type":"boolean"}}}`)}
+	return provider.ToolDefinition{Name: "write_file", Description: "Propose one new workspace file. Styx previews it and asks the user before creating it; existing files are never overwritten.", Schema: json.RawMessage(`{"type":"object","required":["path","content"],"properties":{"path":{"type":"string","description":"Workspace-relative path for a new file"},"content":{"type":"string","description":"Complete new file content"}}}`)}
 }
 
 func (t *WriteFile) Execute(_ context.Context, args map[string]interface{}) (string, error) {

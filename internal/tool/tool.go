@@ -52,6 +52,14 @@ func (r *Registry) Definitions() []provider.ToolDefinition {
 	return definitions
 }
 
+// Get returns a registered tool by name.
+func (r *Registry) Get(name string) (Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	tool, ok := r.tools[name]
+	return tool, ok
+}
+
 // Execute invokes a registered tool.
 func (r *Registry) Execute(ctx context.Context, name string, args map[string]interface{}) (string, error) {
 	r.mu.RLock()

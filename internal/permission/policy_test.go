@@ -15,3 +15,10 @@ func TestPolicySeparatesReadOnlyAndMutatingTools(t *testing.T) {
 		}
 	}
 }
+
+func TestPolicyAllowsToolsGrantedByAnActivatedSkill(t *testing.T) {
+	policy := Policy{AllowedTools: []string{"run_command"}}
+	if policy.Check("run_command") != Allow {
+		t.Error("expected activated Skill to pre-approve run_command")
+	}
+}

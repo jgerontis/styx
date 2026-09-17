@@ -30,6 +30,7 @@ type ChatRequest struct {
 	Tools       []ToolDefinition // available tools for function calling
 	Temperature float32
 	MaxTokens   int
+	Think       bool
 	// Provider-specific options
 	Params map[string]interface{}
 }

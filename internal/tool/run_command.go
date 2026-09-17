@@ -20,7 +20,7 @@ type RunCommand struct{ root string }
 func NewRunCommand(root string) *RunCommand { return &RunCommand{root: root} }
 
 func (t *RunCommand) Definition() provider.ToolDefinition {
-	return provider.ToolDefinition{Name: "run_command", Description: "Run an approved command in the workspace root, normally for focused tests or builds. Provide program and args separately; no shell is used.", Schema: json.RawMessage(`{"type":"object","required":["program"],"properties":{"program":{"type":"string"},"args":{"type":"array","items":{"type":"string"}}}}`)}
+	return provider.ToolDefinition{Name: "run_command", Description: "Run one approved program in the workspace root, normally a focused test or build. Runs without a shell and has timeout and output limits.", Schema: json.RawMessage(`{"type":"object","required":["program"],"properties":{"program":{"type":"string","description":"Executable name, such as go or npm"},"args":{"type":"array","items":{"type":"string"},"description":"Separate command arguments; do not include shell syntax"}}}`)}
 }
 
 func (t *RunCommand) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

@@ -115,6 +115,7 @@ func (op *OllamaProvider) Chat(ctx context.Context, req ChatRequest) (StreamRead
 		"model":       req.Model,
 		"messages":    messages,
 		"stream":      true,
+		"think":       req.Think,
 		"temperature": req.Temperature,
 	}
 	if len(req.Tools) > 0 {

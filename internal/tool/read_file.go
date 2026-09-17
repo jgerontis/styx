@@ -2,7 +2,6 @@ package tool
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -26,7 +25,7 @@ func NewReadFile(root string) *ReadFile {
 func (t *ReadFile) Definition() provider.ToolDefinition {
 	return provider.ToolDefinition{
 		Name:        "read_file",
-		Description: "Read a text file in the workspace. Each line includes a line:hash anchor required by edit_file. Use start_line and end_line to request only the relevant range.",
+		Description: "Read a text file or line range from the workspace. Copy exact text after the line prefix into edit_file old_string; request the smallest useful range.",
 		Schema:      json.RawMessage(`{"type":"object","required":["path"],"properties":{"path":{"type":"string","description":"Workspace-relative file path"},"start_line":{"type":"integer","minimum":1,"description":"First line to read, inclusive"},"end_line":{"type":"integer","minimum":1,"description":"Last line to read, inclusive"}}}`),
 	}
 }
@@ -58,14 +57,9 @@ func (t *ReadFile) Execute(_ context.Context, args map[string]interface{}) (stri
 
 	var result strings.Builder
 	for line := start; line <= end; line++ {
-		fmt.Fprintf(&result, "%d:%s | %s\n", line, lineHash(lines[line-1]), lines[line-1])
+		fmt.Fprintf(&result, "%d: %s\n", line, lines[line-1])
 	}
 	return result.String(), nil
-}
-
-func lineHash(line string) string {
-	digest := sha256.Sum256([]byte(line))
-	return fmt.Sprintf("%x", digest[:4])
 }
 
 func (t *ReadFile) resolve(path string) (string, error) {

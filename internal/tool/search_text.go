@@ -28,7 +28,7 @@ func NewSearchText(root string) *SearchText {
 func (t *SearchText) Definition() provider.ToolDefinition {
 	return provider.ToolDefinition{
 		Name:        "search_text",
-		Description: "Find literal text in workspace files. Use first to locate symbol names, strings, config keys, filenames, or documentation before reading a file.",
+		Description: "Find literal text in workspace files. Use for names, strings, config keys, filenames, and documentation; returns file paths and line numbers.",
 		Schema:      json.RawMessage(`{"type":"object","required":["query"],"properties":{"query":{"type":"string","description":"Literal text to find"},"path":{"type":"string","description":"Optional workspace-relative directory or file to search"},"max_results":{"type":"integer","minimum":1,"maximum":200,"description":"Maximum matches to return"}}}`),
 	}
 }

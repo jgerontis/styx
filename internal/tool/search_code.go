@@ -27,7 +27,7 @@ func NewSearchStructure(root string) *SearchStructure {
 func (t *SearchStructure) Definition() provider.ToolDefinition {
 	return provider.ToolDefinition{
 		Name:        "search_structure",
-		Description: "Find code by syntax using ast-grep. Use for functions, imports, calls, declarations, JSX elements, or other code structures after locating files with search_text. Patterns must be valid code in the requested language. $NAME matches one AST node; $$$NODES matches zero or more nodes.",
+		Description: "Find code by syntax with ast-grep. Use for declarations, imports, calls, and components. Patterns must be valid code in the requested language; $NAME matches one node and $$$NODES matches many.",
 		Schema:      json.RawMessage(`{"type":"object","required":["pattern","language"],"properties":{"pattern":{"type":"string","description":"Valid code-shaped ast-grep pattern. Examples: Go function: 'func $NAME($$$PARAMS) { $$$BODY }'; TypeScript call: '$FUNC($$$ARGS)'; import: 'import $NAME from $SOURCE'"},"language":{"type":"string","description":"Required ast-grep language inferred from target files, such as go, ts, tsx, javascript, python, or rust"},"path":{"type":"string","description":"Optional workspace-relative file or directory to search"}}}`),
 	}
 }
