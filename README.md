@@ -95,10 +95,12 @@ Modes compose the shared harness rather than duplicate it. Each mode owns its sy
 1. **Usable Ollama chat CLI** *(complete)*: `styx chat` connects to Ollama, verifies the requested model, streams responses, preserves an in-memory conversation, and supports `/reset` and `/exit`.
 2. **Safe tool primitives** *(complete)*: grounded workspace inspection; bounded `list_files`, line-ranged `read_file`, literal `search_text`, exact-match `edit_file`, new-file-only `write_file`, and timeout-bounded `run_command` tools. JSON Schema validation rejects malformed calls before execution. Read-only tools auto-run; writes and commands receive one user approval.
 3. **Skills** *(current)*: load agentskills.io-compatible `SKILL.md` bundles using progressive disclosure and `allowed-tools` permissions.
-3.5. **System 1 skill selection**: a two-stage gate — a cheap rank-and-threshold pass over every skill's name/description, then a reread of the top few candidates' bodies to confirm fit — decides which skill, if any, gets injected, instead of the model choosing from a full skill listing every turn. Backend is pluggable (a small local model via the existing `provider` abstraction by default; a sidecar or remote API optional); with no gate configured, Styx falls back to today's model-driven `load_skill` behavior unchanged.
 4. **Plan/Test/Implement/Validate harness**: add isolated job phases, context assembly, and TDD-forward validation.
 5. **Durable sessions and refinement**: file-backed job artifacts, context-window strategies, and high-quality retry behavior.
-6. **Extend System 1 usage** *(exploratory)*: mode routing and phase-skip triage in the Plan/Test/Implement/Validate loop, and prompt/tool-output guardrails before content re-enters context. Approval gating (`permission.Policy.Evaluate`) stays lowest priority and off by default — a System 1 model narrowing what's already required approval is a much higher bar to clear than narrowing what enters context.
+6. **System 1 skill selection**: a two-stage gate — a cheap rank-and-threshold pass over every skill's name/description, then a reread of the top few candidates' bodies to confirm fit — decides which skill, if any, gets injected, instead of the model choosing from a full skill listing every turn. Backend is pluggable (a small local model via the existing `provider` abstraction by default; a sidecar or remote API optional); with no gate configured, Styx falls back to today's model-driven `load_skill` behavior unchanged.
+7. **Extend System 1 usage** *(exploratory)*: mode routing and phase-skip triage in the Plan/Test/Implement/Validate loop, and prompt/tool-output guardrails before content re-enters context. Approval gating (`permission.Policy.Evaluate`) stays lowest priority and off by default — a System 1 model narrowing what's already required approval is a much higher bar to clear than narrowing what enters context.
+8. **Markdown-rendered output**: render completed assistant output (code fences, bold, lists) as ANSI in the terminal instead of raw text. Contained to how `runTurnWithLimits` writes output; no change to the event bus or I/O structure.
+9. **Real TUI**: the chat loop publishes to `event.Bus` (tokens, tool start/stop, approval requests) instead of writing `io.Writer` directly; a `bubbletea`/`lipgloss` subscriber replaces the scanner/stdout loop with scrollable panes, live tool-call status, and approval prompts as UI widgets. Deliberately sequenced last — it renders job/phase state that milestones 4-7 still need to shape.
 
 Early development. Milestones 1 and 2 are complete; Skills are in progress.
 
@@ -136,3 +138,5 @@ styx skills show code-review
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Last edited September 9th, 2026

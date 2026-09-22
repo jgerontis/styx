@@ -16,6 +16,12 @@ type ReadFile struct {
 	root string
 }
 
+const (
+	defaultReadFileLineLimit = 2000
+	maxReadFileLineLength    = 2000
+	maxReadFileBytes         = 50 * 1024
+)
+
 // NewReadFile creates a read-only file tool restricted to root.
 func NewReadFile(root string) *ReadFile {
 	return &ReadFile{root: root}
@@ -54,10 +60,34 @@ func (t *ReadFile) Execute(_ context.Context, args map[string]interface{}) (stri
 	if end > len(lines) {
 		end = len(lines)
 	}
+	lineCapped := false
+	if end-start+1 > defaultReadFileLineLimit {
+		end = start + defaultReadFileLineLimit - 1
+		lineCapped = true
+	}
 
 	var result strings.Builder
+	totalBytes := 0
+	byteCapped := false
+	last := start - 1
 	for line := start; line <= end; line++ {
-		fmt.Fprintf(&result, "%d: %s\n", line, lines[line-1])
+		text := lines[line-1]
+		if len(text) > maxReadFileLineLength {
+			text = text[:maxReadFileLineLength] + fmt.Sprintf("... (line truncated to %d chars)", maxReadFileLineLength)
+		}
+		entry := fmt.Sprintf("%d: %s\n", line, text)
+		if totalBytes+len(entry) > maxReadFileBytes {
+			byteCapped = true
+			break
+		}
+		result.WriteString(entry)
+		totalBytes += len(entry)
+		last = line
+	}
+	if byteCapped {
+		fmt.Fprintf(&result, "(Output capped at %dKB. Showing lines %d-%d. Use start_line=%d to continue.)\n", maxReadFileBytes/1024, start, last, last+1)
+	} else if lineCapped {
+		fmt.Fprintf(&result, "(Showing lines %d-%d of %d. Use start_line=%d to continue.)\n", start, last, len(lines), last+1)
 	}
 	return result.String(), nil
 }

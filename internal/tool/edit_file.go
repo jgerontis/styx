@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/jgerontis/styx/internal/provider"
@@ -63,6 +64,23 @@ func (t *EditFile) Execute(_ context.Context, args map[string]interface{}) (stri
 	content := string(data)
 	count := strings.Count(content, oldString)
 	if count == 0 {
+		// A model that pasted old_string straight from read_file's "N: " output
+		// still has a shot at a unique match once those prefixes are stripped.
+		if stripped, ok := stripReadFileLinePrefixes(oldString); ok && strings.Count(content, stripped) == 1 {
+			oldString = stripped
+			count = 1
+		}
+	}
+	if count == 0 {
+		// Tolerate a model retyping a block with different leading/trailing
+		// whitespace per line, as long as exactly one block in the file matches
+		// once that whitespace drift is ignored.
+		if matched, ok := matchIgnoringLineWhitespace(content, oldString); ok {
+			oldString = matched
+			count = 1
+		}
+	}
+	if count == 0 {
 		return "", fmt.Errorf("old_string was not found in %s; re-read the file and copy the exact text", path)
 	}
 	if count > 1 {
@@ -96,6 +114,72 @@ func (t *EditFile) resolve(path string) (string, error) {
 		return "", fmt.Errorf("path %q is outside the workspace", path)
 	}
 	return resolved, nil
+}
+
+var readFileLinePrefix = regexp.MustCompile(`^\d+: `)
+
+// stripReadFileLinePrefixes undoes read_file's "N: " numbering on every line,
+// but only when every line carries it — otherwise this isn't that mistake.
+func stripReadFileLinePrefixes(s string) (string, bool) {
+	lines := strings.Split(s, "\n")
+	stripped := make([]string, len(lines))
+	matchedAny := false
+	for i, line := range lines {
+		if line == "" {
+			stripped[i] = line
+			continue
+		}
+		loc := readFileLinePrefix.FindStringIndex(line)
+		if loc == nil {
+			return s, false
+		}
+		stripped[i] = line[loc[1]:]
+		matchedAny = true
+	}
+	if !matchedAny {
+		return s, false
+	}
+	return strings.Join(stripped, "\n"), true
+}
+
+// matchIgnoringLineWhitespace looks for a block in content whose lines equal
+// oldString's lines once each side is trimmed, tolerating whitespace drift a
+// model introduces when retyping instead of copying exactly. It only returns
+// a match when exactly one candidate block resolves to exactly one occurrence
+// in content, so ambiguous drift never picks a side.
+func matchIgnoringLineWhitespace(content, oldString string) (string, bool) {
+	searchLines := strings.Split(oldString, "\n")
+	if len(searchLines) > 0 && searchLines[len(searchLines)-1] == "" {
+		searchLines = searchLines[:len(searchLines)-1]
+	}
+	if len(searchLines) == 0 {
+		return "", false
+	}
+	contentLines := strings.Split(content, "\n")
+
+	candidates := make(map[string]bool)
+	for i := 0; i+len(searchLines) <= len(contentLines); i++ {
+		matches := true
+		for j, searchLine := range searchLines {
+			if strings.TrimSpace(contentLines[i+j]) != strings.TrimSpace(searchLine) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			candidates[strings.Join(contentLines[i:i+len(searchLines)], "\n")] = true
+		}
+	}
+
+	if len(candidates) != 1 {
+		return "", false
+	}
+	for block := range candidates {
+		if strings.Count(content, block) == 1 {
+			return block, true
+		}
+	}
+	return "", false
 }
 
 func writeAtomically(path, content string, mode os.FileMode) error {

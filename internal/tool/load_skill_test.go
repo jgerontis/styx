@@ -35,3 +35,25 @@ func TestLoadSkillReturnsInstructionsAndAllowedTools(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadSkillRequiresAName(t *testing.T) {
+	registry := skill.NewRegistry(t.TempDir())
+	if err := registry.Discover(); err != nil {
+		t.Fatalf("discover skills: %v", err)
+	}
+	_, err := NewLoadSkill(registry).Execute(context.Background(), map[string]interface{}{})
+	if err == nil || !strings.Contains(err.Error(), "requires a skill name") {
+		t.Fatalf("expected missing-name error, got %v", err)
+	}
+}
+
+func TestLoadSkillRejectsUnknownSkill(t *testing.T) {
+	registry := skill.NewRegistry(t.TempDir())
+	if err := registry.Discover(); err != nil {
+		t.Fatalf("discover skills: %v", err)
+	}
+	_, err := NewLoadSkill(registry).Execute(context.Background(), map[string]interface{}{"name": "missing"})
+	if err == nil || !strings.Contains(err.Error(), `skill "missing" is not available`) {
+		t.Fatalf("expected not-available error, got %v", err)
+	}
+}

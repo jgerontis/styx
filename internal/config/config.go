@@ -112,8 +112,11 @@ func (c *Config) SaveToFile() error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// configPath returns the path to the config file.
+// configPath returns the path to the config file, honoring STYX_CONFIG_FILE.
 func configPath() string {
+	if v := os.Getenv("STYX_CONFIG_FILE"); v != "" {
+		return v
+	}
 	return filepath.Join(userConfigDir(), "config.yaml")
 }
 

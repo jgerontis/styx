@@ -86,7 +86,7 @@ func (t *SearchText) Execute(_ context.Context, args map[string]interface{}) (st
 		return "", err
 	}
 	if len(matches) == 0 {
-		return "No matches found.", nil
+		return "No matches found. search_text is case-sensitive; if unsure of exact casing, read the file directly instead of guessing variations.", nil
 	}
 	return strings.Join(matches, "\n"), nil
 }

@@ -212,6 +212,15 @@ func (g *toolCallGuard) Observe(toolName string) error {
 
 func executeToolCall(ctx context.Context, input *bufio.Scanner, output io.Writer, tools *tool.Registry, policy permission.Policy, call message.ToolCall) (string, error) {
 	if policy.Check(call.ToolName) == permission.Allow {
+		if call.ToolName == "edit_file" || call.ToolName == "write_file" {
+			// A skill's allowed-tools grant means no confirmation, not no apply flag.
+			args := make(map[string]interface{}, len(call.Args)+1)
+			for key, value := range call.Args {
+				args[key] = value
+			}
+			args["apply"] = true
+			return tools.Execute(ctx, call.ToolName, args)
+		}
 		return tools.Execute(ctx, call.ToolName, call.Args)
 	}
 	if call.ToolName == "run_command" {

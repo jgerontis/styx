@@ -14,5 +14,6 @@ func NewRootCommand(rt *runtime.Runtime) *cobra.Command {
 
 	root.AddCommand(newChatCommand(rt))
 	root.AddCommand(newSkillsCommand(rt))
+	root.AddCommand(newConfigCommand(rt))
 	return root
 }

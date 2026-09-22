@@ -17,6 +17,7 @@ import (
 	"github.com/jgerontis/styx/internal/message"
 	"github.com/jgerontis/styx/internal/permission"
 	"github.com/jgerontis/styx/internal/provider"
+	"github.com/jgerontis/styx/internal/skill"
 	"github.com/jgerontis/styx/internal/tool"
 )
 
@@ -184,6 +185,74 @@ func TestRunChatExecutesReadFileToolCall(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "Styx is a terminal agent harness.") {
 		t.Errorf("expected final answer, got %q", output.String())
+	}
+}
+
+func TestLoadSkillGrantsAllowedToolsWithinTheSameTurn(t *testing.T) {
+	skillsRoot := t.TempDir()
+	skillPath := filepath.Join(skillsRoot, "file-writer", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
+		t.Fatalf("create skill directory: %v", err)
+	}
+	content := "---\nname: file-writer\ndescription: Writes files without confirmation.\nallowed-tools: write_file\n---\n\nWrite the requested file.\n"
+	if err := os.WriteFile(skillPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	skillRegistry := skill.NewRegistry(skillsRoot)
+	if err := skillRegistry.Discover(); err != nil {
+		t.Fatalf("discover skills: %v", err)
+	}
+
+	workspaceRoot := t.TempDir()
+	tools := tool.NewRegistry()
+	if err := tools.Register(tool.NewWriteFile(workspaceRoot)); err != nil {
+		t.Fatalf("register write_file: %v", err)
+	}
+	loader := tool.NewLoadSkill(skillRegistry)
+	if err := tools.Register(loader); err != nil {
+		t.Fatalf("register load_skill: %v", err)
+	}
+
+	var chatRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chatRequests++
+		switch chatRequests {
+		case 1:
+			_, _ = w.Write([]byte(`{"message":{"tool_calls":[{"function":{"index":0,"name":"load_skill","arguments":{"name":"file-writer"}}}]}}` + "\n"))
+			_, _ = w.Write([]byte(`{"done":true}` + "\n"))
+		case 2:
+			_, _ = w.Write([]byte(`{"message":{"tool_calls":[{"function":{"index":0,"name":"write_file","arguments":{"path":"note.txt","content":"hello"}}}]}}` + "\n"))
+			_, _ = w.Write([]byte(`{"done":true}` + "\n"))
+		default:
+			_, _ = w.Write([]byte(`{"message":{"content":"done"}}` + "\n"))
+			_, _ = w.Write([]byte(`{"done":true}` + "\n"))
+		}
+	}))
+	defer server.Close()
+
+	registry := provider.NewRegistry()
+	if err := registry.Register("ollama", provider.NewOllamaProvider(server.URL)); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+	p, err := registry.Get("ollama")
+	if err != nil {
+		t.Fatalf("get provider: %v", err)
+	}
+
+	history := []message.Message{*message.NewTextMessage(message.RoleUser, "write note.txt")}
+	var output bytes.Buffer
+	// No "y" available: an approval prompt here would fail the test outright.
+	scanner := bufio.NewScanner(strings.NewReader(""))
+	if err := runTurnWithLimits(context.Background(), &output, scanner, p, "test-model", tools, loader, &history, 10, 5); err != nil {
+		t.Fatalf("run turn: %v", err)
+	}
+
+	if strings.Contains(output.String(), "Apply this change?") {
+		t.Errorf("expected no approval prompt once file-writer granted write_file, got %q", output.String())
+	}
+	data, err := os.ReadFile(filepath.Join(workspaceRoot, "note.txt"))
+	if err != nil || string(data) != "hello" {
+		t.Fatalf("expected note.txt to be written by the granted tool, data = %q, error = %v", data, err)
 	}
 }
 
