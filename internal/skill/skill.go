@@ -83,6 +83,7 @@ func (s Skill) validate() error {
 
 func splitSkillFile(content string) (string, string, error) {
 	content = strings.TrimPrefix(content, "\ufeff")
+	content = strings.ReplaceAll(content, "\r\n", "\n")
 	if !strings.HasPrefix(content, "---\n") {
 		return "", "", fmt.Errorf("SKILL.md must start with YAML frontmatter")
 	}
