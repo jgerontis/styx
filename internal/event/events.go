@@ -55,6 +55,17 @@ type ApprovalResponseEvent struct {
 
 func (ApprovalResponseEvent) isEvent() {}
 
+// System1DecisionEvent reports a fast typed decision made by the optional
+// System 1 gate, so the CLI/TUI can surface it without waiting on System 2.
+type System1DecisionEvent struct {
+	ToolName   string
+	Question   string
+	Confidence float64
+	Timestamp  time.Time
+}
+
+func (System1DecisionEvent) isEvent() {}
+
 // DoneEvent signals completion of the agent's processing.
 type DoneEvent struct {
 	Timestamp time.Time

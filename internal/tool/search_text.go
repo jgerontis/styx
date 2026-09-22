@@ -71,6 +71,7 @@ func (t *SearchText) Execute(_ context.Context, args map[string]interface{}) (st
 		if err != nil {
 			return err
 		}
+		relative = filepath.ToSlash(relative)
 		for line, text := range strings.Split(string(data), "\n") {
 			if strings.Contains(text, query) {
 				matches = append(matches, fmt.Sprintf("%s:%d: %s", relative, line+1, text))

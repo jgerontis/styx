@@ -9,6 +9,7 @@ import (
 	"github.com/jgerontis/styx/internal/event"
 	"github.com/jgerontis/styx/internal/log"
 	"github.com/jgerontis/styx/internal/provider"
+	"github.com/jgerontis/styx/internal/system1"
 )
 
 // Runtime is the dependency injection container for the entire application.
@@ -21,6 +22,10 @@ type Runtime struct {
 	Skills    SkillRegistry
 	Approver  Approver
 	Store     SessionStore
+	// System1 is the fast gate consulted before falling back to the full
+	// LLM. It is a NoopGate unless config.System1Enabled is set, so Styx
+	// runs fully without a System 1 sidecar installed or reachable.
+	System1 system1.Gate
 }
 
 type ToolRegistry interface {
@@ -61,12 +66,18 @@ func New(ctx context.Context) (*Runtime, error) {
 		return nil, fmt.Errorf("register Ollama provider: %w", err)
 	}
 
+	var gate system1.Gate = system1.NoopGate{}
+	if cfg.System1Enabled {
+		gate = system1.NewHTTPGate(cfg.System1Endpoint)
+	}
+
 	// Create runtime
 	rt := &Runtime{
 		Config:    cfg,
 		Logger:    logger,
 		Bus:       bus,
 		Providers: providers,
+		System1:   gate,
 		// Tools, Skills, Approver, Store to be wired up in later phases
 	}
 

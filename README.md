@@ -40,6 +40,9 @@ Following the [Agent Skills](https://agentskills.io) open standard:
 
 This keeps skills portable across any skills-compatible agent — grab a `SKILL.md` from anywhere and Styx can use it.
 
+### 6. System 1 gates System 2
+Not every decision in the loop needs a full LLM round-trip. A **System 1 gate** — a small, fast, non-generative classifier — can answer narrow, calibrated questions ("does this request need a skill, and which one?", "does this request need tests?", "does this input look like a prompt injection?") in milliseconds, before the slower, generative **System 2** LLM is ever invoked. System 1 never generates tool calls, code, or arguments — it only classifies, scores, or gates with a confidence value, and low-confidence answers always fall back to System 2 or the user. The backend is pluggable and never assumed: a small local model called through Styx's own provider abstraction, a self-hosted sidecar, or a remote API are all just different `system1.Gate` implementations. Styx runs fully without any of them; it's a pure accelerant/filter layered onto the existing loop, never a hard dependency.
+
 ## System Architecture
 
 Everything is wired through a **Runtime** container (dependency injection, no global state):
@@ -55,6 +58,7 @@ internal/
   message/           messages as content blocks (multimodal-ready)
   tool/              Tool interface + registry + built-ins (fs, shell, search, edit)
   permission/        approval layer — implements skills' allowed-tools
+  system1/           optional fast-gate client (System 1) — typed decisions, confidence gating
   middleware/        composable pipeline around tool/provider calls
   skill/             agentskills.io loader (SKILL.md, progressive disclosure)
   agent/             the Plan→Test→Implement→Validate loop + context assembly
@@ -72,6 +76,7 @@ skills/              built-in skills (agentskills.io format)
 - **Middleware pipeline.** Permissions, logging, and metrics are composable wrappers around tool and provider calls rather than tangled into the loop.
 - **Approval as a first-class concern.** Read-only operations auto-run outside system paths; writes, edits, and shell commands prompt. `allowed-tools` from a skill pre-approves specific tools.
 - **Replace-versioning for artifacts.** Only the latest plan and implementation are retained; a short note records "tried X, it failed because Y" so nothing important is lost while stale code never lingers in context.
+- **System 1 fails safe.** The `system1.Gate` is `Noop` by default; a real gate is opt-in via config, whether that's a small local model called through the existing `provider` abstraction or an HTTP call to a self-hosted sidecar or remote API. Any gate error, timeout, or low-confidence answer degrades to the existing static rules and full LLM path — System 1 can only narrow, never widen, what already required approval.
 
 ### Agent modes
 
@@ -88,10 +93,12 @@ Modes compose the shared harness rather than duplicate it. Each mode owns its sy
 ### Milestones
 
 1. **Usable Ollama chat CLI** *(complete)*: `styx chat` connects to Ollama, verifies the requested model, streams responses, preserves an in-memory conversation, and supports `/reset` and `/exit`.
-2. **Safe tool primitives** *(complete)*: grounded workspace inspection; bounded `list_files`, line-ranged `read_file`, literal `search_text`, AST-aware `search_structure`, exact-match `edit_file`, new-file-only `write_file`, and timeout-bounded `run_command` tools. JSON Schema validation rejects malformed calls before execution. Read-only tools auto-run; writes and commands receive one user approval. `search_structure` requires the `ast-grep` executable on `PATH` or at `STYX_AST_GREP_PATH`.
+2. **Safe tool primitives** *(complete)*: grounded workspace inspection; bounded `list_files`, line-ranged `read_file`, literal `search_text`, exact-match `edit_file`, new-file-only `write_file`, and timeout-bounded `run_command` tools. JSON Schema validation rejects malformed calls before execution. Read-only tools auto-run; writes and commands receive one user approval.
 3. **Skills** *(current)*: load agentskills.io-compatible `SKILL.md` bundles using progressive disclosure and `allowed-tools` permissions.
+3.5. **System 1 skill selection**: a two-stage gate — a cheap rank-and-threshold pass over every skill's name/description, then a reread of the top few candidates' bodies to confirm fit — decides which skill, if any, gets injected, instead of the model choosing from a full skill listing every turn. Backend is pluggable (a small local model via the existing `provider` abstraction by default; a sidecar or remote API optional); with no gate configured, Styx falls back to today's model-driven `load_skill` behavior unchanged.
 4. **Plan/Test/Implement/Validate harness**: add isolated job phases, context assembly, and TDD-forward validation.
 5. **Durable sessions and refinement**: file-backed job artifacts, context-window strategies, and high-quality retry behavior.
+6. **Extend System 1 usage** *(exploratory)*: mode routing and phase-skip triage in the Plan/Test/Implement/Validate loop, and prompt/tool-output guardrails before content re-enters context. Approval gating (`permission.Policy.Evaluate`) stays lowest priority and off by default — a System 1 model narrowing what's already required approval is a much higher bar to clear than narrowing what enters context.
 
 Early development. Milestones 1 and 2 are complete; Skills are in progress.
 
@@ -116,10 +123,6 @@ Ensure that Go's binary directory is on your `PATH`. Run the full local pipeline
 ```bash
 make check
 ```
-
-### ast-grep Dependency
-
-`search_structure` uses the external [ast-grep](https://ast-grep.github.io/) executable for syntax-aware code search. Install it with your platform's package manager, then ensure `ast-grep` is on `PATH`. If it lives elsewhere, set `STYX_AST_GREP_PATH` to its full path. This works on macOS, Linux, and Windows (for example, `STYX_AST_GREP_PATH=C:\\Tools\\ast-grep.exe`).
 
 ### Skills
 

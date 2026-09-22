@@ -77,9 +77,6 @@ func runChatWithLimits(ctx context.Context, input io.Reader, output io.Writer, p
 	if err := tools.Register(tool.NewSearchText(workspace.Root)); err != nil {
 		return err
 	}
-	if err := tools.Register(tool.NewSearchStructure(workspace.Root)); err != nil {
-		return err
-	}
 	skills, err := discoverSkillsForChat(workspace.Root)
 	if err != nil {
 		return err
@@ -270,7 +267,7 @@ func confirmCommand(ctx context.Context, input *bufio.Scanner, output io.Writer,
 }
 
 func systemPrompt(workspace tool.WorkspaceSummary, skills []skill.Skill) string {
-	return fmt.Sprintf(`You are Styx, a precise terminal coding agent. Ground repository answers in tool results and distinguish facts from inferences. Preserve the user's requested document structure: when asked to add a paragraph, insert a standalone paragraph rather than modifying a nearby bullet or sentence unless explicitly asked to do so. Choose the narrowest tool that answers the question: map with list_files, discover literals with search_text, inspect syntax with search_structure, then read only relevant lines. Use one edit_file call per change with exact old_string copied from read_file (without its line prefix) and the desired new_string; include surrounding lines when the old text is not unique. For edit_file and write_file, propose the change only; Styx handles preview and approval. Use focused tests or builds to validate changes. Mutating tools and commands require user approval. Load a Skill only when its catalog description matches the task; do not assume its instructions before loading it. Keep answers concise unless the user asks for detail.
+	return fmt.Sprintf(`You are Styx, a precise terminal coding agent. Ground repository answers in tool results and distinguish facts from inferences. Preserve the user's requested document structure: when asked to add a paragraph, insert a standalone paragraph rather than modifying a nearby bullet or sentence unless explicitly asked to do so. Choose the narrowest tool that answers the question: map with list_files, discover literals with search_text, then read only relevant lines. Use one edit_file call per change with exact old_string copied from read_file (without its line prefix) and the desired new_string; include surrounding lines when the old text is not unique. For edit_file and write_file, propose the change only; Styx handles preview and approval. Use focused tests or builds to validate changes. Mutating tools and commands require user approval. Load a Skill only when its catalog description matches the task; do not assume its instructions before loading it. Keep answers concise unless the user asks for detail.
 
 Workspace root: %s
 Project: %s

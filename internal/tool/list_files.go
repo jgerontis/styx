@@ -73,6 +73,7 @@ func (t *ListFiles) Execute(_ context.Context, args map[string]interface{}) (str
 		if err != nil {
 			return err
 		}
+		relativeToWorkspace = filepath.ToSlash(relativeToWorkspace)
 		if entry.IsDir() {
 			relativeToWorkspace += "/"
 		}

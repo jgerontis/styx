@@ -21,6 +21,14 @@ type Config struct {
 	ApprovalSystemPaths  bool   `yaml:"approval-system-paths"`
 	LoopMaxSameToolCalls int    `yaml:"loop-max-same-tool-calls"`
 	LoopMaxIterations    int    `yaml:"loop-max-iterations"`
+
+	// System1Enabled turns on the optional fast-gate sidecar (e.g. Laya).
+	// Styx runs fully without it; when false or unreachable, gating falls
+	// back to the static permission rules and full LLM calls.
+	System1Enabled          bool    `yaml:"system1-enabled"`
+	System1Endpoint         string  `yaml:"system1-endpoint"`
+	System1AutoApprove      bool    `yaml:"system1-auto-approve"`
+	System1ConfidenceThresh float64 `yaml:"system1-confidence-threshold"`
 }
 
 // Load reads configuration with precedence: env > file > defaults.
