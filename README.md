@@ -138,5 +138,3 @@ styx skills show code-review
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-Last edited September 9th, 2026
